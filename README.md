@@ -19,10 +19,33 @@ This project implements an AI agent that can play the Google Snake Game autonomo
 - Custom pathfinding algorithms
 
 ## Setup
-(Setup instructions will be added as development progresses)
+1. Clone the repository:
+```bash
+git clone https://github.com/jsap7/snake-ai.git
+cd snake-ai
+```
+
+2. Install dependencies:
+```bash
+pip install -r requirements.txt
+```
+
+3. Run the script:
+```bash
+python src/main.py
+```
 
 ## Development
-See [DEVELOPMENT.md](DEVELOPMENT.md) for detailed development plans and progress tracking.
 
-## License
-MIT License
+- The `browser.py` file contains the `GameController` class that handles browser automation
+- The `main.py` file contains the test script for the game controller
+
+## Contributing
+
+1. Fork the repository
+2. Create your feature branch (`git checkout -b feature/AmazingFeature`)
+3. Commit your changes (`git commit -m 'Add some AmazingFeature'`)
+4. Push to the branch (`git push origin feature/AmazingFeature`)
+5. Open a Pull Request
+
+
