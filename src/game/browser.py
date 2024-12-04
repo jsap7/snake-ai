@@ -10,6 +10,7 @@ import time
 
 class GameController:
     def __init__(self):
+        """Initialize the game controller"""
         self.driver = None
         
     def initialize(self):
@@ -43,11 +44,20 @@ class GameController:
             )
             logging.info("Found game Play button, clicking...")
             play_button.click()
-            time.sleep(2)
+            time.sleep(2)  # Wait for game to fully load
+            
+            # Now capture and verify game bounds with grid
+            logging.info("Capturing initial game bounds...")
+            game_image = self.capture_game_area()
+            if game_image is not None:
+                # Draw numbered grid on the game area
+                self.draw_debug_grid(game_image)
+                logging.info("Saved numbered grid debug image")
+                
             return True
             
         except Exception as e:
-            logging.error(f"Error finding game Play button: {e}")
+            logging.error(f"Error starting game: {e}")
             return False
             
     def capture_game_area(self):
@@ -58,10 +68,27 @@ class GameController:
             nparr = np.frombuffer(screenshot, np.uint8)
             image = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
             
-            logging.info(f"Screenshot captured. Shape: {image.shape}")
-            logging.info(f"Sample color at (300,300): {image[300,300]}")
+            # Find the actual game area (green play area)
+            height, width = image.shape[:2]
+            game_x = int(width * 0.253)  # Keep left position
+            game_y = int(height * 0.156)  # Keep top position
+            game_width = int(width * 0.496)  # Keep same width
+            game_height = int(width * 0.438)  # 43.8% for 5 pixels less
             
-            return image
+            # Draw debug rectangle to verify game area bounds
+            debug_image = image.copy()
+            cv2.rectangle(debug_image, 
+                         (game_x, game_y), 
+                         (game_x + game_width, game_y + game_height),
+                         (0, 0, 255), 2)  # Red rectangle
+            cv2.imwrite('debug_game_bounds.png', debug_image)
+            
+            # Crop to game area
+            game_area = image[game_y:game_y+game_height, game_x:game_x+game_width]
+            
+            logging.info(f"Game area bounds: ({game_x}, {game_y}) {game_width}x{game_height}")
+            return game_area
+            
         except Exception as e:
             logging.error(f"Error capturing game area: {e}")
             return None
@@ -69,21 +96,30 @@ class GameController:
     def find_game_grid(self, image):
         """Find the game grid boundaries"""
         try:
-            gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-            edges = cv2.Canny(gray, 50, 150)
-            contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            height, width = image.shape[:2]
             
-            if not contours:
-                return None
-                
-            largest_contour = max(contours, key=cv2.contourArea)
-            area = cv2.contourArea(largest_contour)
-            logging.info(f"Largest contour area: {area}")
+            # Grid dimensions are 17x15 - adjusted based on debug image
+            grid_x = int(width * 0.10)  # Move more left (10% from left)
+            grid_y = int(height * 0.16)  # Keep at 16% from top
+            cell_size = int(width * 0.60) // 17  # Increase width to 60%
+            grid_width = cell_size * 17
+            grid_height = cell_size * 15
             
-            x, y, w, h = cv2.boundingRect(largest_contour)
-            logging.info(f"Found grid at ({x}, {y}) with size {w}x{h}")
+            # Debug logging
+            logging.info(f"Image dimensions: {width}x{height}")
+            logging.info(f"Grid start: ({grid_x}, {grid_y})")
+            logging.info(f"Cell size: {cell_size}")
+            logging.info(f"Grid size: {grid_width}x{grid_height}")
             
-            return ((x, y), (w, h))
+            # Draw debug rectangle to verify position
+            debug_image = image.copy()
+            cv2.rectangle(debug_image, 
+                         (grid_x, grid_y), 
+                         (grid_x + grid_width, grid_y + grid_height),
+                         (0, 0, 255), 2)  # Red rectangle with thickness 2
+            cv2.imwrite('debug_grid_bounds.png', debug_image)
+            
+            return ((grid_x, grid_y), (grid_width, grid_height))
             
         except Exception as e:
             logging.error(f"Error finding grid: {e}")
@@ -158,21 +194,23 @@ class GameController:
             grid_x, grid_y = grid_bounds[0]
             grid_width, grid_height = grid_bounds[1]
             
-            # Calculate relative position
-            rel_x = x - grid_x
-            rel_y = y - grid_y
-            
-            # Calculate cell size
-            cell_width = grid_width / 15
+            # Calculate cell size based on 17 columns
+            cell_width = grid_width / 17
             cell_height = grid_height / 15
+            
+            # Calculate relative position
+            rel_x = x - grid_x + (cell_width * 0.15)
+            rel_y = y - grid_y + (cell_height * 0.15)
             
             # Convert to grid coordinates
             grid_col = int(rel_x / cell_width)
             grid_row = int(rel_y / cell_height)
             
-            # Log the conversion
-            logging.info(f"Converting ({x}, {y}) to grid pos ({grid_col}, {grid_row})")
+            # Ensure coordinates are within bounds
+            grid_col = max(0, min(grid_col, 16))  # 0-16 for 17 columns
+            grid_row = max(0, min(grid_row, 14))  # 0-14 for 15 rows
             
+            logging.info(f"Converting ({x}, {y}) to grid pos ({grid_col}, {grid_row})")
             return (grid_col, grid_row)
             
         except Exception as e:
@@ -232,12 +270,7 @@ class GameController:
     def check_death(self):
         """Check if the game is over"""
         try:
-            # Take screenshot
-            screenshot = self.capture_game_area()
-            if screenshot is None:
-                return False
-            
-            # Look for the play button that appears on death
+            # First check for play button
             try:
                 play_button = self.driver.find_element(By.CSS_SELECTOR, 'div.FL0z2d[aria-label="Play"]')
                 if play_button.is_displayed():
@@ -246,12 +279,6 @@ class GameController:
             except:
                 pass
             
-            # Backup check: look for snake
-            snake_positions = self.find_snake(screenshot)
-            if not snake_positions:
-                logging.info("No snake found - game over detected")
-                return True
-            
             return False
             
         except Exception as e:
@@ -259,27 +286,42 @@ class GameController:
             return False
             
     def get_quick_state(self):
-        """Fast state check for responsive gameplay"""
+        """Get the current game state quickly"""
         try:
             game_image = self.capture_game_area()
             if game_image is None:
+                logging.error("Failed to capture game area")
                 return None
-
+            
+            # Check for death first
             if self.check_death():
+                logging.info("Death state detected")
                 return {'game_over': True}
-
-            grid_bounds = self.find_game_grid(game_image)
-            if not grid_bounds:
-                return None
-
+            
+            # Get image dimensions for grid calculations
+            height, width = game_image.shape[:2]
+            grid_x = 0  # Since we've already cropped to game area
+            grid_y = 0  # Since we've already cropped to game area
+            grid_width = width
+            grid_height = height
+            
+            # Calculate grid bounds in the format expected by convert_to_grid_coordinates
+            grid_bounds = ((grid_x, grid_y), (grid_width, grid_height))
+            
+            # Find snake and food
             snake_positions = self.find_snake(game_image)
             if not snake_positions:
+                logging.error("Failed to find snake positions")
                 return None
-
+            
             food_position = self.find_food(game_image)
-            if not food_position:
+            if food_position is None:
+                logging.error("Failed to find food position")
                 return None
-
+            
+            logging.info(f"Snake positions: {snake_positions}")
+            logging.info(f"Food position: {food_position}")
+            
             return {
                 'snake_positions': snake_positions,
                 'food_position': food_position,
@@ -289,9 +331,106 @@ class GameController:
             
         except Exception as e:
             logging.error(f"Error in quick state check: {e}")
+            import traceback
+            traceback.print_exc()
             return None
             
     def close(self):
         """Close the browser"""
         if self.driver:
             self.driver.quit()
+            
+    def draw_debug_grid(self, image):
+        """Draw a 17x15 numbered grid with enhanced snake visualization"""
+        try:
+            height, width = image.shape[:2]
+            cell_width = width // 17
+            cell_height = height // 15
+            debug_image = image.copy()
+            
+            # Draw base grid and numbers (keeping existing code)
+            for row in range(15):
+                for col in range(17):
+                    x = col * cell_width
+                    y = row * cell_height
+                    cv2.rectangle(debug_image, 
+                                (x, y), 
+                                (x + cell_width, y + cell_height),
+                                (255, 255, 255), 1)
+                    
+                    cell_num = row * 17 + col
+                    cv2.putText(debug_image, 
+                              str(cell_num),
+                              (x + 5, y + cell_height - 5),
+                              cv2.FONT_HERSHEY_SIMPLEX, 
+                              0.3,
+                              (255, 255, 255),
+                              1)
+            
+            # Enhanced snake visualization
+            snake_positions = self.find_snake(image)
+            if snake_positions:
+                # Draw snake body cells with grid numbers
+                for i, pos in enumerate(snake_positions):
+                    col = pos[0] // cell_width
+                    row = pos[1] // cell_height
+                    cell_pos = row * 17 + col
+                    
+                    # Different visualization for head vs body
+                    if i == 0:  # Head
+                        # Draw double rectangle for head
+                        cv2.rectangle(debug_image,
+                                    (col * cell_width, row * cell_height),
+                                    ((col + 1) * cell_width, (row + 1) * cell_height),
+                                    (0, 0, 255), 3)  # Thick red border
+                        
+                        # Add "H" label
+                        cv2.putText(debug_image,
+                                  f"H({cell_pos})",
+                                  (col * cell_width + 2, row * cell_height + 15),
+                                  cv2.FONT_HERSHEY_SIMPLEX,
+                                  0.4,
+                                  (0, 0, 255),
+                                  1)
+                    else:  # Body
+                        cv2.rectangle(debug_image,
+                                    (col * cell_width, row * cell_height),
+                                    ((col + 1) * cell_width, (row + 1) * cell_height),
+                                    (255, 0, 0), 2)  # Blue border
+                        
+                        # Add segment number
+                        cv2.putText(debug_image,
+                                  f"S{i}({cell_pos})",
+                                  (col * cell_width + 2, row * cell_height + 15),
+                                  cv2.FONT_HERSHEY_SIMPLEX,
+                                  0.3,
+                                  (255, 0, 0),
+                                  1)
+            
+            # Food visualization
+            food_position = self.find_food(image)
+            if food_position:
+                food_col = food_position[0] // cell_width
+                food_row = food_position[1] // cell_height
+                food_cell_pos = food_row * 17 + food_col
+                
+                cv2.rectangle(debug_image,
+                            (food_col * cell_width, food_row * cell_height),
+                            ((food_col + 1) * cell_width, (food_row + 1) * cell_height),
+                            (0, 255, 0), 2)  # Green for food
+                
+                # Add "F" label with grid position
+                cv2.putText(debug_image,
+                          f"F({food_cell_pos})",
+                          (food_col * cell_width + 2, food_row * cell_height + 15),
+                          cv2.FONT_HERSHEY_SIMPLEX,
+                          0.4,
+                          (0, 255, 0),
+                          1)
+            
+            cv2.imwrite('debug_numbered_grid.png', debug_image)
+            return debug_image
+            
+        except Exception as e:
+            logging.error(f"Error drawing debug grid: {e}")
+            return None
